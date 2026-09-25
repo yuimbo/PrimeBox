@@ -1,0 +1,12 @@
+GLIBC_2.15 {
+  global:
+    __fdelt_chk;
+};
+
+GLIBC_2.28 {
+  global:
+    fcntl;
+
+  local:
+    *;
+};

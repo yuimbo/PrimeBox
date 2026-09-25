@@ -29,8 +29,34 @@ static void h(int sig, siginfo_t *si, void *uc) {
         for (int s=28;s>=0;s-=4) b[i++]=hex[(regs[r]>>s)&15];
     }
     b[i++]='\n';
+    /* dump the stack so the caller of the faulting function can be found */
+    {
+        unsigned int sp = (unsigned int)u->uc_mcontext.arm_sp;
+        unsigned int *sw = (unsigned int *)sp;
+        char sb[512]; int j = 0;
+        for (int k = 0; k < 32 && j < 480; k++) {
+            unsigned int v = sw[k];
+            sb[j++]='0';sb[j++]='x';
+            for (int s2=28;s2>=0;s2-=4) sb[j++]=hex[(v>>s2)&15];
+            sb[j++]=' ';
+        }
+        sb[j++]='\n';
+        int sfd = open("/tmp/crash.stack", O_WRONLY|O_CREAT|O_TRUNC, 0644);
+        if (sfd >= 0) { (void)write(sfd, sb, j); close(sfd); }
+    }
     int fd = open("/tmp/crash.log", O_WRONLY|O_CREAT|O_APPEND, 0644);
     if (fd >= 0) { (void)write(fd, b, i); close(fd); }
+    /* dump the address space so the crash PC/LR can be resolved */
+    fd = open("/proc/self/maps", O_RDONLY);
+    if (fd >= 0) {
+        char mbuf[4096];
+        int n;
+        int out = open("/tmp/crash.maps", O_WRONLY|O_CREAT|O_TRUNC, 0644);
+        while ((n = read(fd, mbuf, sizeof(mbuf))) > 0)
+            if (out >= 0) (void)write(out, mbuf, n);
+        close(fd);
+        if (out >= 0) close(out);
+    }
     _exit(1);
 }
 __attribute__((constructor)) static void init(void) {

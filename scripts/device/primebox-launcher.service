@@ -1,0 +1,15 @@
+[Unit]
+Description=PrimeBox boot menu (rekordbox / Engine OS)
+After=local-fs.target data.mount etc.mount touch-fw-update.service
+RequiresMountsFor=/data
+Before=engine.service
+ConditionPathExists=/data/primebox/primebox-launcher
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh /data/primebox/launcher.sh
+TimeoutStartSec=infinity
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target

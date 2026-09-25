@@ -58,7 +58,7 @@ device.
 ### 2d. `/dev/paudiog0` gadget path
 
 If a `/dev/paudiog0` stub exists, JUCE opens it and issues USB-gadget audio
-ioctls that fail with `ENOTTY`, then `exit(0)`. `fix-dev.sh` ensures the node
+ioctls that fail with `ENOTTY`, then `exit(0)`. `setup-chroot.sh` ensures the node
 does **not** exist, so `open()` returns `ENOENT` and JUCE cleanly skips the
 gadget path.
 

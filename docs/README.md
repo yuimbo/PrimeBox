@@ -21,6 +21,7 @@ and works — not exploratory dead ends.
 | 09 | [Runtime & launcher](09-runtime-launcher.md) | boot flow, daemons, launcher menu |
 | 10 | [Memory map](10-memory-map.md) | runtime addresses and patch reference |
 | 11 | [Troubleshooting](11-troubleshooting.md) | symptoms → cause → fix |
+| 12 | [Runtime audit](12-runtime-audit.md) | whole-chroot symbol/ABI audit, module ABI |
 
 ## Conventions
 
@@ -28,6 +29,6 @@ and works — not exploratory dead ends.
   bias `0x8000`, so `file offset = VA - 0x8000`.
 * *stock* = unmodified `rbp` from XDJ-RX3 firmware v1.20
   (md5 `4f2efcfc0c9e3f539289f863acfddcc6`).
-* *rbp-audio* = the fully patched build produced by
-  `tools/patch-rbp/rbp_patch.py` (md5 `3706c68f7242779d46afa09f35a39acf`).
+* *patched rbp* = the build produced by `tools/patch-rbp/rbp_patch.py`
+  (md5 `3706c68f7242779d46afa09f35a39acf`).
 * All ARM assembler is ARM (not Thumb) unless stated.

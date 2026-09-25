@@ -17,14 +17,14 @@ into what `rbp` expects.
 │  Rockchip RK3288 · 800×1280 portrait panel · ILI2117 touch           │
 │  JP11 4-ch audio codec · 1 rear USB-A · MIDI control surface         │
 │                                                                      │
-│  ┌──────────────────────── /data/rbx3-run (chroot) ────────────────┐ │
+│  ┌──────────────────────── /data/primebox/rootfs (chroot) ────────────────┐ │
 │  │  soft-float glibc 2.13 + RX3 libs + DirectFB 1.4               │ │
 │  │                                                                │ │
-│  │   rbp-audio  ──  the XDJ-RX3 rekordbox player                  │ │
+│  │   build/rbp  ──  the XDJ-RX3 rekordbox player                  │ │
 │  │      ▲  ▲  ▲                                                   │ │
-│  │      │  │  └── knobshim2.so   Prime GO MIDI → RX3 keycodes     │ │
+│  │      │  │  └── knobshim.so   Prime GO MIDI → RX3 keycodes     │ │
 │  │      │  └───── audioshim.so   JUCE/ALSA → hw:1,0 (4ch)         │ │
-│  │      └──────── fbshim-tsc.so  fb ioctl + touch translation     │ │
+│  │      └──────── fbshim.so  fb ioctl + touch translation     │ │
 │  │                                                                │ │
 │  │   libdirectfb_fbdev.so (rebuilt) ── rotation + RGB565→RGB32    │ │
 │  └────────────────────────────────────────────────────────────────┘ │
@@ -40,8 +40,8 @@ into what `rbp` expects.
 |---|---|---|---|
 | CPU float ABI | soft-float ARM32 | hard-float ARMv7 kernel | soft-float chroot; kernel runs soft-float ELF fine |
 | Display | 1280×800 landscape, RGB565 | 800×1280 portrait, RGB32, triple-buffered DRM fb | rebuilt DirectFB fbdev driver rotates + converts |
-| Touchscreen | tsc2007 resistive via `/dev/tsc2007_2-0048` | ILI2117 capacitive evdev | `fbshim-tsc.so` synthesises the tsc2007 protocol |
-| Controls | Pioneer front-panel MCUs (EUP/SUB) | ALSA MIDI "PRIME GO Control Surface" | `knobshim2.so` maps MIDI → `sendKey()` |
+| Touchscreen | tsc2007 resistive via `/dev/tsc2007_2-0048` | ILI2117 capacitive evdev | `fbshim.so` synthesises the tsc2007 protocol |
+| Controls | Pioneer front-panel MCUs (EUP/SUB) | ALSA MIDI "PRIME GO Control Surface" | `knobshim.so` maps MIDI → `sendKey()` |
 | Audio | 3× discrete CS4344 DACs | single JP11 4-channel codec | `audioshim.so` multiplexes 4 channels onto `hw:1,0` |
 | USB | 2 host ports + sub-MCU | 1 host port | `usb-watch.sh` + native DeviceSQL import |
 | Music DB | internal EDB daemon | — | RX3 `edb_streamd` runs in the chroot |
@@ -62,9 +62,9 @@ stick → kernel usb3 → usb-watch.sh mounts /media/usb1/sda1
 **Loading + playing a track**
 
 ```
-LOAD button → Prime GO MIDI note → knobshim2 → sendKey(0x4311)
+LOAD button → Prime GO MIDI note → knobshim → sendKey(0x4311)
       → rbp loads track + ANLZ analysis → waveform
-PLAY button → knobshim2 → sendKey(0x4101)
+PLAY button → knobshim → sendKey(0x4101)
       → DjEngineIF::play → PlayEngine clocked by the ALSA callback
       → audioshim feeds 4-channel S24_LE periods to hw:1,0 @ 44.1 kHz
       → master (ch 0/1) + headphones (ch 2/3)

@@ -454,10 +454,36 @@ static int source_menu_with_usb1(void)
      return 1;
 }
 
+/* VIEW with a mounted Rekordbox stick but no browse source selected yet
+ * (browseDevice 0) would show the empty "Please select a source" screen: the
+ * RX3 expects the user to pick a source with its USB1 button first, which the
+ * Prime GO does not have. Treat that VIEW as the USB1 button. */
+static int view_needs_usb1(void)
+{
+     if (*(volatile uint32_t *)0x326f8bc != 0)      /* browseDevice already set */
+          return 0;
+     return access("/media/usb1/sda1/PIONEER/rekordbox/export.pdb", F_OK) == 0;
+}
+
 static void handle_note(int ch, int note, int on)
 {
+     static int view_as_usb1;
+
      if (ch == 15 && note == 8)
           shift_down = on;
+
+     if (ch == 15 && note == 7) {
+          if (on)
+               view_as_usb1 = view_needs_usb1();
+          if (view_as_usb1) {
+               send_rx_key(K_USB1, on ? OP_PRESS : OP_RELEASE, CH_GLOBAL, 0);
+               klog("knobshim2: VIEW %s -> USB1 select 0x0209 (no source yet)\n",
+                    on ? "on" : "off");
+               if (!on)
+                    view_as_usb1 = 0;
+               return;
+          }
+     }
 
      /* Source menu + mounted Rekordbox stick: knob push and FWD become the
       * USB1 source button.  Swallow BOTH edges so the generic SELECTOR/SOURCE

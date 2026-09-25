@@ -42,14 +42,14 @@ Three coordinated pieces:
                                         ▼
                               /dev/fb0  800×1280×32 (rockchipdrmfb)
 
- LD_PRELOAD fbshim-tsc.so (PART 1)
+ LD_PRELOAD fbshim.so (PART 1)
    FBIOGET_VSCREENINFO → 1280×800, 16 bpp, RGB565 bitfields, yv=800
    FBIOGET_FSCREENINFO → line_length = 2560
    FBIOPUT_VSCREENINFO → accept silently
    FBIOPAN_DISPLAY     → 60 fps pacing + serialisation
 ```
 
-* **`fbshim-tsc.so` PART 1** makes DirectFB create **RGB16** surfaces, matching
+* **`fbshim.so` PART 1** makes DirectFB create **RGB16** surfaces, matching
   what `rbp` actually writes. (If DirectFB is instead forced to RGB32, `rbp`'s
   RGB565 pixels are misread as packed 32-bit words: the UI appears half-width,
   duplicated and colour-shifted.)
@@ -71,18 +71,23 @@ Three coordinated pieces:
 
 ## 3. Building the patched DirectFB fbdev module
 
-The module is `DirectFB-1.4.x/systems/fbdev`. You need a **soft-float ARM**
-build whose dynamic symbols are glibc-2.13 compatible.
+> **Match the RX3 core's version and ABI.** The RX3 ships DirectFB **1.4.0**,
+> whose system-module ABI is **9**. A module built from 1.4.16 declares ABI
+> **10** and is silently rejected by the RX3 core
+> (`Direct/Modules: ABI version ... (10) does not match 9!` →
+> `No system found` → `DirectFBCreate()` fails). Build the module from the
+> **DirectFB 1.4.0** source so the ABI and the `CoreSystemFuncs` layout match:
 
 ```bash
-# 1. get DirectFB 1.4.16 source
-git clone https://github.com/deniskropp/DirectFB.git
-cd DirectFB && git checkout v1.4.16     # or your preferred 1.4.x tree
+# 1. get DirectFB 1.4.0 source (Distrotech mirror)
+git clone --branch DIRECTFB_1_4_0 https://github.com/Distrotech/DirectFB.git directfb
 
 # 2. apply the PrimeBox fbdev changes
-patch -p1 < /path/to/PrimeBox/tools/build-directfb/directfb-full.diff
+patch -p1 --fuzz=5 < /path/to/PrimeBox/tools/build-directfb/directfb-1.4.0-fbdev.diff
 
-# 3. build only the fbdev module against the RX3 sysroot
+# 3. build only the fbdev module against the RX3 sysroot.
+#    --with-gfxdrivers=none is required: the RX3 gal driver cannot
+#    initialise on the Prime GO and makes graphics_core fail.
 ./autogen.sh --host=arm-linux-gnueabi \
     --prefix=/usr --with-gfxdrivers=none --disable-x11 ...
 make -C systems/fbdev libdirectfb_fbdev.la
@@ -94,6 +99,18 @@ for s in libdirect-1.4.so.6 libfusion-1.4.so.6 libdirectfb-1.4.so.6; do
 done
 ```
 
+> **Modern-toolchain libc leak.** A modern cross toolchain resolves `fcntl` to
+> `fcntl@GLIBC_2.28` and emits `__fdelt_chk@GLIBC_2.15`. The RX3 glibc 2.13
+> has neither, so `libdirect` fails to load. Add
+> [`tools/build-directfb/compat.c`](../tools/build-directfb/compat.c) +
+> `compat.map` (which define both, versioned) to `lib/direct` and rebuild:
+>
+> ```bash
+> cp tools/build-directfb/compat.c lib/direct/compat_shim.c
+> # add compat_shim.lo to am_libdirect_la_OBJECTS in lib/direct/Makefile
+> make -C lib/direct
+> ```
+
 See [`tools/build-directfb/README.md`](../tools/build-directfb/README.md) for
 the full recipe and the exact configure flags used.
 
@@ -101,11 +118,15 @@ the full recipe and the exact configure flags used.
 > `fbdev.c`, always `rm -f systems/fbdev/fbdev.lo systems/fbdev/.libs/fbdev.o`
 > before `make`, or your changes are silently ignored.
 
-Deploy to:
+Deploy to the directory the **RX3 core** actually loads from:
 
 ```
-/data/rbx3-run/usr/lib/directfb-1.4-6/systems/libdirectfb_fbdev.so
+/data/primebox/rootfs/usr/lib/directfb-1.4-0/systems/libdirectfb_fbdev.so
 ```
+
+The module directory name comes from the core's build (`directfb-1.4-0` for
+1.4.0, `directfb-1.4-6` for 1.4.16). To be safe, keep
+`directfb-1.4-6` as a symlink to `directfb-1.4-0` so either name resolves.
 
 Also required, from the RX3 rootfs (already patched in the reference image):
 
@@ -117,25 +138,25 @@ Also required, from the RX3 rootfs (already patched in the reference image):
 
 Minimal, working config inside the chroot:
 
-```
-no-hardware
-no-cursor
-system=fbdev
-fbdev=/dev/fb0
-```
+See [`scripts/device/directfbrc`](../scripts/device/directfbrc); `start-rb.sh`
+copies it into the chroot on every start. `layer-buffer-mode=triple` is required:
+in the default BACKSYSTEM mode DirectFB never calls the driver's `FlipRegion`,
+so nothing is rotated onto the panel.
 
 Do **not** set `layer-size` or `layer-rotate` (both caused corruption or were
 no-ops). `DFB_ROTATE=left` in the environment drives the patched driver.
 
 ## 5. Frame pacing and CPU
 
-On the Rockchip DRM fb, `FBIOPAN_DISPLAY` returns immediately instead of
-blocking on vsync. Without pacing, `gui_task` runs at thousands of FPS and
-locks a CPU core. `fbshim-tsc.c` clamps `FBIOPAN_DISPLAY` to ~60 FPS
-(16,666 µs) under a mutex, restoring smooth native rendering.
+On the Rockchip DRM fb, `FBIOPAN_DISPLAY` blocks until the page flip lands
+(~16.8 ms), and `FBIO_WAITFORVSYNC` returns immediately. The patched module
+pans from a dedicated thread so rendering and rotation overlap the flip
+(~47 fps, limited by rbp's own software rendering). `fbshim.c` also
+enforces a minimum pan interval, `FBSHIM_PAN_NS` (default 16666666 = 60 Hz,
+`0` = off).
 
 Two other CPU hogs were eliminated on the way to a smooth UI (both in
-`fbshim-tsc.c`):
+`fbshim.c`):
 
 * `GpioManager` polls `/dev/gpiodrv` which never signals → the shim's `poll()`
   parks the thread (`sleep`) instead of busy-spinning at RT priority.

@@ -1,22 +1,107 @@
-# 09 — Runtime & launcher
+# 09 — Runtime, install & boot menu
 
-This document ties the pieces together: what runs on the Prime GO, in what
-order, and how to launch it from the device's boot menu.
+What runs on the Prime GO, in what order, how it is installed, and how the boot
+menu works.
 
-## 1. The launch sequence
+## 1. Install
+
+Everything lives in `/data/primebox`; the only file outside it is the boot unit.
+
+```bash
+WORKSTATION$ make                      # build/primebox.tar.gz
+WORKSTATION$ make install HOST=root@PRIMEGO.local
+WORKSTATION$ make uninstall HOST=root@PRIMEGO.local
+```
+
+`make install` copies the payload to `/data/primebox`, writes the boot unit into
+`/etc/systemd/system` on the rootfs, and reboots. Writing to the rootfs leaves it
+writable until the next boot (this firmware cannot remount it read-only again once
+written), and Engine OS fills the ~7 MB free space with caches while it is writable,
+so the install reboots immediately and waits for the deck to come back. It keeps
+`/data/primebox/launcher.conf` and the player's `root/settings` across updates.
+
+An official Engine OS update replaces the rootfs and removes the boot unit: run
+`make install` again afterwards. The rootfs unit is the same mechanism Djinn uses for
+root/SSH access (`/opt/djinn/reapply.sh`).
+
+### Root SSH
+
+`make install` needs root SSH. On a Djinn-modified deck this is root + password
+(see the Djinn recovery notes for your deck). The stock firmware has no root SSH;
+install the Djinn mod first.
+
+## 2. Layout on the device
 
 ```
-systemctl stop engine.service edisksd.service   # release audio, USB, controls
+/data/primebox/
+├── env.sh                    shared paths for the scripts below
+├── start-rb.sh                run rbp + edb_streamd + the USB watcher
+├── usb-watch.sh               USB hotplug daemon
+├── setup-chroot.sh            bind /dev /proc /sys /tmp; device stubs; FIFOs
+├── launcher.sh                boot menu wrapper (runs the chosen command)
+├── launcher.conf              menu entries, default, countdown
+├── primebox-launcher          the menu binary
+├── primebox-launcher.service  the boot unit (also on the rootfs)
+├── rootfs/                    the soft-float RX3 chroot (104 MB)
+│   ├── root/pdj/rbp            the patched player
+│   ├── usr/lib/{knobshim,audioshim,fbshim}.so
+│   ├── usr/lib/directfb-1.4-0/systems/libdirectfb_fbdev.so
+│   └── usr/etc/directfbrc
+└── log/                       launcher.log, rbp.log, edb.log, usbwatch.log
+```
+
+`/usr/lib/systemd/system/primebox-launcher.service` + its
+`multi-user.target.wants` link are the only files on the rootfs.
+
+## 3. Boot menu
+
+At power-on the deck shows the PrimeBox menu (landscape, like rbp) before Engine
+OS. Pick an entry by tapping it, or turn the browse knob and push it. The first
+real input stops the countdown.
+
+| Piece | Role |
+|---|---|
+| `primebox-launcher` | draws the menu, prints the chosen command |
+| `launcher.sh` | runs Engine OS setup, the menu, the chosen command; always restarts Engine OS afterwards |
+| `launcher.conf` | menu entries, default, countdown |
+| `primebox-launcher.service` | runs `launcher.sh` `Before=engine.service` |
+
+`launcher.conf`:
+
+```
+default = ENGINE OS        # entry the countdown picks
+timeout = 5                # seconds; 0 = wait for input
+
+# DJ Apps                  # "# Heading" lines become section headings
+REKORDBOX (XDJ-RX3) | sh /data/primebox/start-rb.sh
+ENGINE OS |                # empty command = Engine OS
+```
+
+A `bg/` prefix runs the command in the background (e.g.
+`STREAM+ | bg/systemctl start enginestream.service`). `launcher.sh` logs to
+`/data/primebox/log/launcher.log`. `touch /data/primebox/launcher.skip` skips the
+menu once.
+
+`launcher.sh` runs `/usr/Engine/Scripts/setup-prerequisites.sh` first: at boot
+Engine OS has not done it yet, and it loads `snd_seq_midi` (the control surface
+needed by the knob and rbp), pins audio/GPU IRQs and sets the GPU governor.
+
+**The unit is on the rootfs because** `/etc` is an overlay whose upper layer is
+`/data/system/etc/overlay`, and systemd reads the rootfs units at boot. Never
+`rm /etc/systemd/system/primebox-launcher.service` by hand: that creates an overlay
+*whiteout* which hides the unit even from the rootfs copy. Use `make uninstall`,
+which removes it from the rootfs.
+
+## 4. The launch sequence
+
+```
+systemctl stop engine.service edisksd.service soundswitch.service
         │
         ▼
-sh /data/fix-dev.sh          # bind /dev /proc /sys /tmp; device stubs; FIFOs; mtab
+sh /data/primebox/setup-chroot.sh    # bind /dev /proc /sys /tmp; stubs; FIFOs
         │
         ▼
-deploy binaries into /data/rbx3-run
-   rbp-audio  knobshim2.so  audioshim.so  fbshim-tsc.so  libdirectfb_fbdev.so
-        │
-        ▼
-start edb_streamd            # DeviceSQL daemon (EDB_BIN=/usr/bin)
+start edb_streamd                     # DeviceSQL daemon (EDB_BIN=/usr/bin)
         │
         ▼
 start rbp inside the chroot
@@ -28,47 +113,15 @@ start rbp inside the chroot
 wait until rbp has /tmp/udev_usb1 open, then start usb-watch.sh
         │
         ▼
-keep running while rbp lives; on exit stop the watcher and daemons
+keep running while rbp lives; on exit stop the watcher and daemons,
+and restart Engine OS
 ```
 
 The `LD_PRELOAD` order matters only in that the **first** library's `ioctl`
-wins; `fbshim-tsc.so` deliberately contains both the fb ioctl shim **and** the
-touch emulation so one library owns `ioctl`. `audioshim` and `knobshim` follow.
+wins; `fbshim.so` deliberately contains both the fb ioctl shim **and** the touch
+emulation so one library owns `ioctl`. `audioshim` and `knobshim` follow.
 
-## 2. Device scripts
-
-| Script | Role |
-|---|---|
-| `scripts/device/start-rb.sh` | full clean launcher (recommended) |
-| `scripts/device/restart-knob2.sh` | deploy + relaunch with verbose logs |
-| `scripts/device/fix-dev.sh` | bind mounts + device stubs + FIFOs + mtab |
-| `scripts/device/usb-watch.sh` | USB hotplug daemon |
-| `scripts/device/launcher.conf` | boot-menu entry for the Denon launcher |
-| `scripts/device/debug/` | `setup-env.sh`, `run-test.sh`, `relaunch2.sh` for gdb/strace sessions |
-
-All live in `/data` on the device. They must be copied there; `/tmp` is wiped
-on reboot.
-
-## 3. Denon boot launcher
-
-The Prime GO has a custom launcher (`/data/launcher`, driven by
-`soundswitch.service`) that reads `/data/launcher.conf`. Add PrimeBox at the
-top:
-
-```
-# DJ Apps
-REKORDBOX (XDJ-RX3) | /data/start-rb.sh
-
-# RetroGo Launcher
-...
-BACK TO ENGINE |
-```
-
-`start-rb.sh` runs in the foreground for as long as `rbp` lives, so the
-launcher does not fight `rbp` for `/dev/fb0`. When `rbp` exits, cleanup runs
-and the menu returns.
-
-## 4. Daemons
+## 5. Daemons
 
 ### `edb_streamd` (DeviceSQL)
 
@@ -76,59 +129,35 @@ Pioneer's embedded database server. Needed for USB library import/analysis and
 playlist access.
 
 ```sh
-export EDB_BIN=/usr/bin
-chroot /data/rbx3-run /lib/ld-linux.so.3 /usr/bin/edb_streamd
-```
-
-It uses `/tmp/req_LocalDBServer` and `/tmp/guard_LocalDBServer`. Before starting
-a fresh `rbp`:
-
-```sh
-rm -f /tmp/guard_LocalDBServer /tmp/req_LocalDBServer
-# kill any stale rbp still holding the guard lock
+EDB_BIN=/usr/bin chroot /data/primebox/rootfs /lib/ld-linux.so.3 /usr/bin/edb_streamd
 ```
 
 ### `usb-watch.sh`
 
-Started **after** `rbp` has opened `/tmp/udev_usb1`, so the initial mount
-notification is not lost. See [06 — USB](06-usb.md).
+Watches the rear USB-A port, mounts the stick, binds it into the chroot at
+`/media/usb1/sda1`, and writes `mount`/`umount` lines to the FIFO rbp reads
+(`/tmp/udev_usb1`). See [docs/06](06-usb.md).
 
-## 5. Running without systemd (manual)
+## 6. Files
 
-```sh
-ssh root@YOUR_PRIMEGO
-sh /data/start-rb.sh
-```
-
-To go back to stock Engine:
-
-```sh
-systemctl start engine.service
-```
-
-`engine.service` is stopped at runtime but **not disabled**, so a normal reboot
-returns to Engine OS.
-
-## 6. Files at runtime
-
-| Path (device) | Purpose |
+| Path | What |
 |---|---|
-| `/data/rbx3-run/` | soft-float chroot |
-| `/data/rbx3-run/root/pdj/rbp` | player binary |
-| `/data/rbx3-run/usr/lib/{knobshim,audioshim,fbshim}.so` | shims |
-| `/data/rbx3-run/usr/lib/directfb-1.4-6/systems/libdirectfb_fbdev.so` | patched display driver |
-| `/data/rbp-p.log` | rbp stdout/stderr |
-| `/tmp/knobshim.log`, `/tmp/audioshim.log` | shim logs (chroot `/tmp` = host `/tmp`) |
-| `/data/usbwatch.log` | USB watcher log |
-| `/data/edb_d.log` | DeviceSQL log |
+| `/data/primebox/rootfs/` | soft-float chroot |
+| `/data/primebox/rootfs/root/pdj/rbp` | player binary |
+| `/data/primebox/rootfs/usr/lib/{knobshim,audioshim,fbshim}.so` | shims |
+| `/data/primebox/rootfs/usr/lib/directfb-1.4-0/systems/libdirectfb_fbdev.so` | patched display driver |
+| `/data/primebox/log/` | all logs |
+| `/data/primebox/launcher.conf` | boot menu |
+| `/usr/lib/systemd/system/primebox-launcher.service` | boot unit |
 
-## 7. Startup troubleshooting
+## 7. Troubleshooting
 
-| Symptom | Fix |
+| Symptom | Cause |
 |---|---|
-| rbp starts then dies immediately | run `fix-dev.sh` (missing `/dev/fb0` in chroot) |
-| no buttons after UI appears | `/dev/gpiodrv` is a FIFO (must be a regular file); read/poll shims must be active |
-| black screen | `engine.service` still running and owns `fb0`; stop it |
+| no boot menu, straight to Engine OS | boot unit missing from the rootfs (e.g. after an official update); `make install` again |
+| menu shows, Engine OS only | `default`/`timeout` in `launcher.conf`, or the countdown expired |
 | rbp hangs before UI | stale `guard_LocalDBServer` lock or stale frozen `rbp`; kill and clean |
 | USB not seen | watcher started before `rbp` opened the FIFO; restart `usb-watch.sh` |
-| device reboots under load | an old display stack panicking the fb path; use the shipped patched DirectFB module and frame pacing |
+| device reboots under load | an old display stack panicking the fb path; use the shipped patched DirectFB module |
+| `Direct/Modules: ABI version ... does not match` then `No system found` | module was built from 1.4.16 (ABI 10) but the RX3 core is 1.4.0 (ABI 9); `make` rebuilds it |
+| `GLIBC_2.17 not found (required by libdirect)` | modern-toolchain libc leak; link `compat.c` into `lib/direct` and rebuild |

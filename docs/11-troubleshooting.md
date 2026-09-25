@@ -6,10 +6,10 @@ Consolidated symptom → cause → fix. Each subsystem doc has more detail.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `rbp` exits immediately, no window | chroot `/dev` not populated (`/dev/fb0` missing) | run `/data/fix-dev.sh` after every reboot |
+| `rbp` exits immediately, no window | chroot `/dev` not populated (`/dev/fb0` missing) | run `/data/primebox/setup-chroot.sh` after every reboot |
 | Black screen, no response | `engine.service` still owns `/dev/fb0` | `systemctl stop engine.service edisksd.service` |
 | `rbp` hangs before the UI appears | stale `guard_LocalDBServer` lock, or a frozen stale `rbp` holding it | `kill -9` stale `rbp`/`edb_streamd`, `rm -f /tmp/guard_LocalDBServer /tmp/req_LocalDBServer` |
-| Process runs but no UI threads | `/dev/gpiodrv` is a FIFO and the main thread blocks on `read` | ensure `fix-dev.sh` makes it a regular file; `fbshim-tsc` must intercept `read`/`poll` |
+| Process runs but no UI threads | `/dev/gpiodrv` is a FIFO and the main thread blocks on `read` | ensure `setup-chroot.sh` makes it a regular file; `fbshim` must intercept `read`/`poll` |
 | Device reboots / panics | old display stack modesetting the DRM fb | use the patched DirectFB fd dev module + 60 fps pacing; never run the raw stack |
 
 ## Display
@@ -17,7 +17,7 @@ Consolidated symptom → cause → fix. Each subsystem doc has more detail.
 | Symptom | Cause | Fix |
 |---|---|---|
 | UI rotated 90° | wrong/absent `DFB_ROTATE` | use `DFB_ROTATE=left` |
-| Half-width, duplicated, wrong colours | DirectFB creating RGB32 while `rbp` writes RGB565 | ensure `fbshim-tsc.so` (16 bpp) is first in `LD_PRELOAD` |
+| Half-width, duplicated, wrong colours | DirectFB creating RGB32 while `rbp` writes RGB565 | ensure `fbshim.so` (16 bpp) is first in `LD_PRELOAD` |
 | Flicker | rotating directly into the visible fb buffer | use the driver's system-memory source surface |
 | Very low FPS / one core pegged | `FBIOPAN_DISPLAY` not throttled | use the patched shim's 60 fps `FBIOPAN_DISPLAY` |
 | `EINVAL` on `FBIOPUT_VSCREENINFO` | modeset for 16 bpp/`yv=1280` on fixed 32 bpp DRM fb | patched DirectFB fbdev overrides the format from `FBIOGET_VSCREENINFO` |
@@ -27,7 +27,7 @@ Consolidated symptom → cause → fix. Each subsystem doc has more detail.
 | Symptom | Cause | Fix |
 |---|---|---|
 | No touch response at all | browse caution id non-zero blocks dispatch | apply `0x2dc228`/`0x2dc46c` patches; clear `0x05a191fc` |
-| Only slow drags register | hysteresis eats the first frame | debounce burst (2 down frames) in `fbshim-tsc` |
+| Only slow drags register | hysteresis eats the first frame | debounce burst (2 down frames) in `fbshim` |
 | Horizontal mirror | firmware `invertX` not cancelled | correct transform (`*lx = py`) |
 | Taps work, drag-scroll doesn't | list-scroll deadlock | apply `0x363774`/`0x363794` patches |
 | Touch works but UI lags | `GpioManager` busy-spins at RT priority | `poll()`/`read()` shims for `/dev/gpiodrv` |
@@ -36,7 +36,7 @@ Consolidated symptom → cause → fix. Each subsystem doc has more detail.
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| No controls at all | no ALSA sequencer subscription | `knobshim2` must create/subscribe to seq `16:0` |
+| No controls at all | no ALSA sequencer subscription | `knobshim` must create/subscribe to seq `16:0` |
 | Presses do nothing, LED/UI ignores | wrong keycode or `op` | check the keycode table; analog must use `OP_VALUE`, buttons `OP_PRESS`/`OP_RELEASE` |
 | Knob scrolls erratically | encoder delta not decoded as two's complement | `v >= 64 ? v-64 : v` |
 | Pitch fader dead | sent as `0x4107` (TempoRange, `op` must be 0) | send `0x4109` with `OP_VALUE` |

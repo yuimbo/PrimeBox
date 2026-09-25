@@ -1,76 +1,56 @@
 #!/bin/sh
-# start-rb.sh — Launch rekordbox player (XDJ-RX3) on Denon Prime GO cleanly
+# start-rb.sh — run the XDJ-RX3 rekordbox player on the Prime GO.
+#
+# Stops Engine OS, starts edb_streamd + rbp in the chroot and the USB
+# watcher, stays in the foreground while rbp runs, and restarts Engine OS
+# when rbp exits or fails to start. Launched from the boot menu.
+#
+#   RBP_ENV="KNOB_VERBOSE=1 PRIMEGO_TIMING=1" sh start-rb.sh   extra rbp env
+. /data/primebox/env.sh
+LOG=$LOG_DIR/rbp.log
 
-# 1. Stop Engine OS service and disk daemon (mandatory — releases audio, USB, controls)
-systemctl stop engine.service edisksd.service 2>/dev/null
+stop_all() {
+    sh "$PB/usb-watch.sh" stop >/dev/null
+    pkill -9 -f "$RBP_MATCH" 2>/dev/null
+    pkill -9 -f "$EDB_MATCH" 2>/dev/null
+    chmod 640 /dev/mem 2>/dev/null
+}
+back_to_engine() {
+    stop_all
+    systemctl start --no-block $ENGINE_UNITS 2>/dev/null
+}
+
+# Engine OS holds audio, USB and the control surface; edisksd unmounts sticks
+systemctl stop $ENGINE_UNITS 2>/dev/null
+stop_all
+sh "$PB/setup-chroot.sh"
+rm -f /tmp/guard_LocalDBServer /tmp/req_LocalDBServer /tmp/knobshim.log /tmp/audioshim.log
+
+chroot "$ROOT" env EDB_BIN=/usr/bin /lib/ld-linux.so.3 /usr/bin/edb_streamd \
+    >"$LOG_DIR/edb.log" 2>&1 &
 sleep 1
 
-# 2. Kill any stale rb processes
-for p in $(ps w | awk '$0 ~ /[s]trace|[r]oot\/pdj\/[r]bp|[e]db_streamd|[g]dbserver|[u]sb-watch/ {print $1}'); do
-    kill -9 $p 2>/dev/null
-done
-sleep 1
+chroot "$ROOT" env DFB_ROTATE=left $RBP_ENV \
+    LD_PRELOAD=/usr/lib/fbshim.so:/usr/lib/audioshim.so:/usr/lib/knobshim.so \
+    /lib/ld-linux.so.3 /root/pdj/rbp -a </dev/null >"$LOG" 2>&1 &
 
-# 3. Setup device binds, stubs, and FIFOs
-sh /data/fix-dev.sh
-
-# 4. Deploy binary and shims
-cp /data/rbp-audio /data/rbx3-run/root/pdj/rbp
-chmod 755 /data/rbx3-run/root/pdj/rbp
-
-cp /data/knobshim2.so /data/rbx3-run/root/pdj/knobshim.so
-cp /data/knobshim2.so /data/rbx3-run/usr/lib/knobshim.so
-chmod 755 /data/rbx3-run/usr/lib/knobshim.so /data/rbx3-run/root/pdj/knobshim.so
-
-cp /data/audioshim.so /data/rbx3-run/root/pdj/audioshim.so
-cp /data/audioshim.so /data/rbx3-run/usr/lib/audioshim.so
-chmod 755 /data/rbx3-run/usr/lib/audioshim.so /data/rbx3-run/root/pdj/audioshim.so
-
-cp /data/fbshim-tsc.so /data/rbx3-run/root/pdj/fbshim.so
-cp /data/fbshim-tsc.so /data/rbx3-run/usr/lib/fbshim.so
-chmod 755 /data/rbx3-run/usr/lib/fbshim.so /data/rbx3-run/root/pdj/fbshim.so
-
-cp /data/libdirectfb_fbdev-rot16.so /data/rbx3-run/usr/lib/directfb-1.4-6/systems/libdirectfb_fbdev.so
-chmod 755 /data/rbx3-run/usr/lib/directfb-1.4-6/systems/libdirectfb_fbdev.so
-
-# 5. Clean stale IPC and logs
-rm -f /tmp/guard_LocalDBServer /tmp/req_LocalDBServer /tmp/knobshim.log /tmp/audioshim.log /tmp/dfbdig*.log /tmp/rot_surface.dump
-rm -f /data/rbp-p.log
-
-# 6. Start EDB daemon inside chroot
-export EDB_BIN=/usr/bin
-nohup chroot /data/rbx3-run /lib/ld-linux.so.3 /usr/bin/edb_streamd > /data/edb_d.log 2>&1 &
-sleep 1
-
-# 7. Stop USB watcher during startup
-sh /data/usb-watch.sh stop
-
-# 8. Start rbp cleanly inside chroot
-nohup chroot /data/rbx3-run env DFB_ROTATE=left JOG_VERBOSE=1 TEMPO_VERBOSE=1 LD_PRELOAD=/usr/lib/fbshim.so:/usr/lib/audioshim.so:/usr/lib/knobshim.so /lib/ld-linux.so.3 /root/pdj/rbp -a </dev/null >/data/rbp-p.log 2>&1 &
-
-echo "launched rbp, waiting for initialization..."
+# rbp is ready once it holds the USB notification FIFO (bounded: 15 s)
 RBP=""
-for i in $(seq 1 30); do
-  RBP=$(ps w | awk '/\/root\/pdj\/rbp/ && !/sh -c/ && !/awk/ {print $1; exit}')
-  if [ -n "$RBP" ] && ls -l /proc/$RBP/fd 2>/dev/null | grep -q udev_usb1; then
-    echo "RBP=$RBP ready (udev_usb1 fd opened)"
-    break
-  fi
-  sleep 0.5
+i=0
+while [ $i -lt 30 ]; do
+    RBP=$(pgrep -f "$RBP_MATCH" | head -n 1)
+    [ -n "$RBP" ] && ls -l "/proc/$RBP/fd" 2>/dev/null | grep -q udev_usb1 && break
+    RBP=""
+    i=$((i + 1)); sleep 0.5
 done
-
-# 9. Start USB watcher once rbp is ready
-sh /data/usb-watch.sh start
-
-# 10. Wait while rbp is running (so launcher doesn't redraw on top of rbp)
-if [ -n "$RBP" ]; then
-  while kill -0 $RBP 2>/dev/null; do
-    sleep 2
-  done
+if [ -z "$RBP" ]; then
+    echo "start-rb: rbp did not start (see $LOG); back to Engine OS"
+    back_to_engine
+    exit 1
 fi
+echo "start-rb: rbp $RBP ready"
 
-# Cleanup on exit
-sh /data/usb-watch.sh stop
-for p in $(ps w | awk '$0 ~ /[r]oot\/pdj\/[r]bp|[e]db_streamd/ {print $1}'); do
-    kill -9 $p 2>/dev/null
-done
+sh "$PB/usb-watch.sh" start
+while kill -0 "$RBP" 2>/dev/null; do sleep 2; done
+echo "start-rb: rbp exited; back to Engine OS"
+back_to_engine

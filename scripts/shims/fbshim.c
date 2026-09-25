@@ -256,7 +256,9 @@ static int tsc_open_impl(void)
     ensure_reader();
     if (out_pipe[0] < 0)
         return -1;
-    rd_end = dup(out_pipe[0]);
+    /* rbp's touch panel treats fd 0 as a failed open (it is normally stdin),
+     * so always hand back a descriptor >= 3. */
+    rd_end = fcntl(out_pipe[0], F_DUPFD, 3);
     if (rd_end < 0)
         return -1;
     for (i = 0; i < 64; i++) {
@@ -419,17 +421,21 @@ int ioctl(int fd, unsigned long request, ...)
     case FBIOPUT_VSCREENINFO:
         return 0;
     case FBIOPAN_DISPLAY: {
-        /* Lock-free high-precision 60 FPS pacing for DirectFB.
-         * Rockchip DRM returns immediately from FBIOPAN_DISPLAY.
-         * Pace each flip with nanosecond clock_nanosleep so gui_task renders at 60 FPS
-         * without burning 100% CPU on Core 0. Zero mutexes, no audio/event stalling. */
+        /* Rockchip DRM returns immediately from FBIOPAN_DISPLAY, so without
+         * pacing gui_task would spin. FBSHIM_PAN_NS sets the minimum interval
+         * between pans (default 16666666 = 60 Hz, 0 = off). */
+        static long min_ns = -1;
         static struct timespec last_pan;
         struct timespec now;
+        if (min_ns < 0) {
+            const char *e = getenv("FBSHIM_PAN_NS");
+            min_ns = e ? atol(e) : 16666666L;
+        }
         clock_gettime(CLOCK_MONOTONIC, &now);
-        if (last_pan.tv_sec > 0) {
+        if (min_ns > 0 && last_pan.tv_sec > 0) {
             long elapsed_ns = (now.tv_sec - last_pan.tv_sec) * 1000000000L + (now.tv_nsec - last_pan.tv_nsec);
-            if (elapsed_ns > 0 && elapsed_ns < 16666666L) {
-                struct timespec req = { 0, 16666666L - elapsed_ns };
+            if (elapsed_ns > 0 && elapsed_ns < min_ns) {
+                struct timespec req = { 0, min_ns - elapsed_ns };
                 nanosleep(&req, NULL);
             }
         }

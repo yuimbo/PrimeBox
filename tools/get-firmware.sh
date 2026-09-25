@@ -2,7 +2,7 @@
 # get-firmware.sh - download the official XDJ-RX3 v1.20 firmware update.
 #
 # The archive is published by AlphaTheta. This script only downloads it; it
-# contains no Pioneer code. Unzip to obtain XDJ-RX3_v120/XDJ-RX3.UPD, then see
+# contains no Pioneer code. Unzip to obtain XDJRX3.UPD, then see
 # docs/01-firmware-extraction.md.
 #
 # usage: ./get-firmware.sh [output-dir]

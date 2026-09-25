@@ -1,0 +1,5 @@
+no-hardware
+no-cursor
+system=fbdev
+fbdev=/dev/fb0
+layer-buffer-mode=triple

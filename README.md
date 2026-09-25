@@ -29,7 +29,7 @@ and real 4-channel audio out of the master and headphone outputs.
 | USB stick + rekordbox DB (`export.pdb`) | ✅ Working | [docs/06](docs/06-usb.md) |
 | Audio (44.1 kHz, master + headphones, mixer, EQ, xfader) | ✅ Working | [docs/07](docs/07-audio.md) |
 | Beat FX + Sound Color FX | ✅ Working | [docs/08](docs/08-effects.md) |
-| Boot launcher integration | ✅ Working | [docs/09](docs/09-runtime-launcher.md) |
+| Boot menu (touch / knob, Engine OS fallback) | ✅ Working | [docs/09](docs/09-runtime-launcher.md) |
 
 The authoritative "how it works" is the documentation in [`docs/`](docs/).
 It describes the one working design — not the dead ends along the way.
@@ -49,11 +49,11 @@ It describes the one working design — not the dead ends along the way.
                               │  rbp-audio
                               ▼
    Denon Prime GO  ──  soft-float glibc-2.13 chroot  ──  rbp
-        │                    ( /data/rbx3-run )
+        │                    ( /data/primebox/rootfs )
         │
         ├── display   : rebuilt DirectFB fbdev module (rotate + force real fb format)
-        ├── touch     : fbshim-tsc.so  (ILI2117 evdev → RX3 tsc2007 protocol)
-        ├── controls  : knobshim2.so   (Prime GO MIDI → rbp keycodes)
+        ├── touch     : fbshim.so  (ILI2117 evdev → RX3 tsc2007 protocol)
+        ├── controls  : knobshim.so   (Prime GO MIDI → rbp keycodes)
         ├── audio     : audioshim.so   (JUCE/ALSA → hw:1,0 4-channel JP11 codec)
         ├── usb       : usb-watch.sh + native DeviceSQL import
         └── daemons   : edb_streamd, systemd launcher entry
@@ -61,55 +61,55 @@ It describes the one working design — not the dead ends along the way.
 
 ---
 
-## Quick start
+## Install
 
-Full instructions live in **[TUTORIAL.md](TUTORIAL.md)**. The short version:
+Two commands on a workstation with Docker, after putting the firmware key at
+`keys/aes256.key` (see [keys/README.md](keys/README.md)):
 
 ```bash
-# 0. prerequisites: arm-linux-gnueabi-gcc, docker, rust, patchelf
-./tools/get-firmware.sh ~/xdjrx3-fw        # official XDJ-RX3 v1.20 .UPD
-#    supply the firmware key at keys/aes256.key (see keys/README.md)
-
-# 1. decrypt .UPD -> ISO, then extract it (see the tutorial)
-cd tools/rx3dec && cargo build --release && cd ../..
-./tools/rx3dec/target/release/rx3dec \
-    ~/xdjrx3-fw/XDJ-RX3_v120/XDJ-RX3.UPD keys/aes256.key extracted/XDJRX3.iso
-7z x extracted/XDJRX3.iso -oextracted/XDJRX3
-
-# 2. patch the player
-python3 tools/patch-rbp/rbp_patch.py extracted/XDJRX3/pdj/rbp -o extracted/rbp-audio
-
-# 3. build the ARM32 shims (soft-float, glibc 2.13 ABI)
-make -C scripts/shims RX3="$PWD/extracted/XDJRX3-rootfs"
-
-# 4. copy the payload to the Prime GO and run the launcher
-scp deploy/* root@YOUR_PRIMEGO:/data/
-ssh root@YOUR_PRIMEGO 'sh /data/start-rb.sh'
+make                      # firmware -> build/primebox.tar.gz  (~2 min, first run)
+make install HOST=root@PRIMEGO.local
 ```
 
----
+`make` downloads and extracts the official XDJ-RX3 v1.20 firmware, patches `rbp`,
+builds the shims, the DirectFB display module and the boot menu, and assembles the
+runtime tree. `make install` copies it to `/data/primebox` on the deck, installs the
+boot-menu unit, and reboots. Power on: the menu shows; pick **REKORDBOX** with the
+touchscreen or the browse knob, or let it fall through to **ENGINE OS**.
+
+```bash
+make uninstall HOST=root@PRIMEGO.local   # remove everything, back to stock
+```
+
+The detailed walkthrough, prerequisites and troubleshooting are in
+**[TUTORIAL.md](TUTORIAL.md)**. To understand how it works, read
+[`docs/`](docs/).
 
 ## Repository layout
 
 ```
 PrimeBox/
-├── README.md                 you are here
+├── Makefile                  build + install (make, make install HOST=…)
+├── docker/Dockerfile         arm-linux-gnueabi toolchain image
 ├── TUTORIAL.md               step-by-step setup & first run
-├── NOTICE.md                 copyright / legal notes
-├── LICENSE                   MIT (our code)
 ├── docs/                     findings & subsystem documentation
-│   └── 00-overview.md … 11-troubleshooting.md
 ├── keys/                     where you put the firmware key (not committed)
 ├── scripts/
 │   ├── device/               shell scripts that run on the Prime GO
-│   └── shims/                our LD_PRELOAD / translation shims (C)
+│   └── shims/                runtime LD_PRELOAD shims (C) -> build/
 └── tools/
+    ├── extract-firmware.sh    .UPD → extracted/ (one command)
     ├── rx3dec/               .UPD → ISO decryptor (Rust)
     ├── patch-rbp/            rbp binary patcher + patch reference
-    └── build-directfb/       patched DirectFB fbdev module + diff
+    ├── build-directfb/       patched DirectFB fbdev module + diff
+    ├── assemble-chroot.sh    build the runtime tree from extracted/ + build/
+    ├── install.sh            copy to the deck, install the boot unit
+    ├── launcher/             the boot menu (C, static ARM)
+    └── debug/                probes and test helpers (not shipped)
 ```
 
----
+Nothing under `build/` or `extracted/` is committed: `build/` is generated,
+`extracted/` holds your own copy of the (copyrighted) firmware.
 
 ## What is *not* in this repo
 

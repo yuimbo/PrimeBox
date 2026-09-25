@@ -12,7 +12,7 @@
 #
 # On attach (any mass-storage device appears on usb3/usb4):
 #   mount  /dev/sdX1 -> /media/usb1/sda1            (RX3-style vfat options)
-#   bind   /media/usb1/sda1 -> /data/rbx3-run/media/usb1/sda1  (chroot view)
+#   bind   /media/usb1/sda1 -> /data/primebox/rootfs/media/usb1/sda1  (chroot view)
 #   write  "mount /media/usb1/sda1" -> /tmp/udev_usb1          (rbp FIFO)
 # On detach (device disappears):
 #   write  "umount /media/usb1/sda1" -> /tmp/udev_usb1
@@ -28,19 +28,19 @@
 # (sda/sdb/...), partition vs whole-disk sticks, stick swaps (detach old,
 # attach new), and rbp restarts (re-notifies the current state).
 #
-# Usage:  sh /data/usb-watch.sh start|stop|status|run
+# Usage:  sh /data/primebox/usb-watch.sh start|stop|status|run
 # Env:    USBWATCH_BUSES="3 4"   (sysfs usbN controllers to watch)
 #         USBWATCH_POLL=1        (poll interval seconds)
 # =============================================================================
 
-MNT=/media/usb1/sda1
-CH_MNT=/data/rbx3-run/media/usb1/sda1
+. /data/primebox/env.sh
+MNT=$USB_MNT
+CH_MNT=$ROOT$USB_MNT
 FIFO=/tmp/udev_usb1
-LOG=/data/usbwatch.log
+LOG=$LOG_DIR/usbwatch.log
 PIDFILE=/tmp/usbwatch.pid
 BUSES="${USBWATCH_BUSES:-3 4}"
 POLL="${USBWATCH_POLL:-1}"
-TIMEOUT=/data/timeout
 
 log() { echo "$(date '+%F %T') $$ $*" >> "$LOG"; }
 
@@ -73,6 +73,18 @@ find_partition() {
   return 1
 }
 
+# --- write to the FIFO, bounded to 3 s (the host busybox has no `timeout`) ---
+bounded_write() {
+  printf "%s" "$1" > "$FIFO" 2>/dev/null &
+  w=$!
+  ( sleep 3; kill -9 $w 2>/dev/null ) &
+  k=$!
+  wait $w 2>/dev/null
+  rc=$?
+  kill $k 2>/dev/null
+  return $rc
+}
+
 # --- tell rbp about a USB event (FIFO; rbp keeps it open O_RDWR) -----------
 notify() {
   msg=$1
@@ -80,7 +92,7 @@ notify() {
     log "notify: $FIFO missing (rbp down?) — skipping"
     return 1
   fi
-  if "$TIMEOUT" 3 sh -c 'printf "%s" "$1" > "$2"' sh "$msg" "$FIFO" 2>/dev/null; then
+  if bounded_write "$msg"; then
     log "notify: $msg"
     return 0
   fi
@@ -142,7 +154,7 @@ detach() {
   rmdir "$MNT" 2>/dev/null
 }
 
-rbp_pid() { ps w | awk '/\/root\/pdj\/rbp/ && !/sh -c/ && !/strace/ && !/awk/ {print $1; exit}'; }
+rbp_pid() { pgrep -f "$RBP_MATCH" | head -n 1; }
 
 run() {
   log "=== usb-watch run: watching buses [$BUSES], poll ${POLL}s ==="

@@ -36,7 +36,7 @@ read (fd, buf, 6)           # ts_data
 calibration, then `solveCoordToKey` maps the coordinate to a rekordbox UI
 action.
 
-## 2. `fbshim-tsc.so` — PART 2 (touch)
+## 2. `fbshim.so` — PART 2 (touch)
 
 The same preload library that carries the fb shim also emulates the tsc2007.
 It intercepts `open("/dev/tsc2007_2-0048")` and returns the read end of an
@@ -131,7 +131,7 @@ Three firmware-level problems are fixed by
    | `0x2dc228` | `mov r7, r0` → `mov r7, #0` (ignore caution id) |
    | `0x2dc46c` | `beq` → `b` (always enter dispatch) |
 
-   Additionally `knobshim2` clears the caution id at `0x05a191fc` while a USB
+   Additionally `knobshim` clears the caution id at `0x05a191fc` while a USB
    drive is present.
 
 2. **Playlist drag-scroll deadlock.** `TouchAreaProc_ListScroll::holdTouch`
@@ -171,7 +171,7 @@ Each hit dispatches a native key (`0x02a9` INFO, `0x02b2` list scroll,
 cat /dev/input/event0 | od -An -tx1 | head      # touch the screen
 
 # inside the chroot: the shim's own log
-cat /tmp/fbshim-tsc.log        # only if verbose logging is enabled
+cat /tmp/fbshim.log        # only if verbose logging is enabled
 ```
 
 Symptoms and fixes:

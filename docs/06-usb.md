@@ -15,7 +15,7 @@ The reference RX3 mount convention is kept:
 
 | Host path | Chroot path |
 |---|---|
-| `/media/usb1/sda1` | `/data/rbx3-run/media/usb1/sda1` |
+| `/media/usb1/sda1` | `/data/primebox/rootfs/media/usb1/sda1` |
 
 ## 2. `usb-watch.sh`
 
@@ -49,7 +49,7 @@ restarts.
 
 `rbp` was patched to use `/tmp/udev_*` instead of `/proc/udev_*` (see the udev
 string patches in the patch table), because `/tmp` is a tmpfs it can create.
-`fix-dev.sh` creates them:
+`setup-chroot.sh` creates them:
 
 ```sh
 for f in udev_usb1 udev_usb2 udev_usbctn1 udev_usbctn2; do
@@ -134,7 +134,7 @@ r1=high). Writing a normal little-endian u64 here produces the famous
 * **`edb_streamd`** (DeviceSQL) must be running inside the chroot before `rbp`:
 
   ```sh
-  EDB_BIN=/usr/bin chroot /data/rbx3-run /lib/ld-linux.so.3 /usr/bin/edb_streamd
+  EDB_BIN=/usr/bin chroot /data/primebox/rootfs /lib/ld-linux.so.3 /usr/bin/edb_streamd
   ```
 
   It communicates over the FIFOs `/tmp/req_LocalDBServer` and
@@ -145,7 +145,7 @@ r1=high). Writing a normal little-endian u64 here produces the famous
   `vfs_getfsys` classifies the mount as `vfat`:
 
   ```sh
-  ln -sf /proc/mounts /data/rbx3-run/etc/mtab
+  ln -sf /proc/mounts /data/primebox/rootfs/etc/mtab
   ```
 
 * The `IPowerManager` notification stubs must be patched (there is no Pioneer
@@ -156,6 +156,9 @@ r1=high). Writing a normal little-endian u64 here produces the famous
 
 With the drive mounted and analysed, the shim makes browsing usable:
 
+* `VIEW` opens the stick directly while no source is selected yet (the
+  RX3 would show "Please select a source" and wait for its USB1 button, which
+  the Prime GO lacks), so one VIEW press after boot shows the library;
 * `FWD`/`SOURCE` opens the Source menu;
 * pushing the browse knob on the Source menu selects **USB 1**
   (`BrowseUiIf::InputKey(UKEY_USB1)`), because the Prime GO has no physical
@@ -186,4 +189,4 @@ ls /media/usb1/sda1/PIONEER/rekordbox/     # export.pdb, exportExt.pdb
 | generic "USB1", 0 GB | `DevicePropertyInfo` not populated / analysis not run |
 | `881466368.0 GB` | capacity u64 word order wrong |
 | mount never seen | FIFO missing, or mount sent without preceding umount |
-| "Please select a source" | browse mode 3; should be 5 (list) after selection |
+| "Please select a source" | no source selected (browseDevice 0) and an old knobshim without the VIEW → USB1 remap; press FWD then push the knob |

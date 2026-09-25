@@ -3,13 +3,13 @@
 The Prime GO's control surface is a **USB MIDI device** (`15e4:800c`,
 "PRIME GO Control Surface"), exposed as ALSA sequencer client **`16:0`**.
 `rbp` knows nothing about MIDI — it reads keycodes from Pioneer front-panel
-microcontrollers. `knobshim2.so` bridges the two.
+microcontrollers. `knobshim.so` bridges the two.
 
 ## 1. The control surface
 
 * The device only streams MIDI while an **ALSA sequencer subscription** is
   active. Pure `rawmidi` reads get nothing (this is why stock Engine "just
-  works" and a naive reader does not). `knobshim2` subscribes itself.
+  works" and a naive reader does not). `knobshim` subscribes itself.
 * All channels are **0-based** in the firmware sources:
   * global `15` → MIDI ch 16,
   * decks `2`/`3` → MIDI ch 3/4,
@@ -18,7 +18,7 @@ microcontrollers. `knobshim2.so` bridges the two.
 
 ## 2. How the shim injects keys
 
-`knobshim2.so` is `LD_PRELOAD`ed into `rbp`. It resolves the live
+`knobshim.so` is `LD_PRELOAD`ed into `rbp`. It resolves the live
 `ui::KeyManager` singleton from `rbp`'s BSS:
 
 ```
@@ -51,10 +51,10 @@ clears the browse-caution id; a `bfx_init_thread` locks Beat FX routing.
 
 ### 3.1 Global channel (MIDI ch 16)
 
-| Prime GO | MIDI | RX3 key (`knobshim2`) |
+| Prime GO | MIDI | RX3 key (`knobshim`) |
 |---|---|---|
-| VIEW | Note 7 | `K_BROWSE 0x0202` |
-| FWD | Note 4 | `K_SOURCE 0x0207` |
+| VIEW | Note 7 | `K_BROWSE 0x0202`; `K_USB1 0x0209` while no source is selected and a stick is mounted |
+| FWD | Note 4 | `K_SOURCE 0x0201` |
 | BACK | Note 3 | `K_BACK 0x420d` |
 | Browse knob push | Note 6 | `K_SELECTOR 0x420c` press |
 | Browse knob turn | CC 5 | `K_SELECTOR 0x420c` rotate (±1) |
@@ -193,7 +193,7 @@ trims/EQs = 0.5, crossfader = 0.5, Sound Color FX = FILTER @ 0.5.
 
 ## 5. Startup initialisation
 
-`knobshim2` performs these once, when `KeyManager` becomes ready:
+`knobshim` performs these once, when `KeyManager` becomes ready:
 
 * mixer route: channel 1 → deck 1, channel 2 → deck 2
   (`*(0x01149f54) = 0x01149f10`),

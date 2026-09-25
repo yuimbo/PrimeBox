@@ -45,18 +45,18 @@ SSH_ASKPASS=/tmp/askpass.sh DISPLAY=:0 \
 ## 3. The soft-float chroot
 
 `rbp` and its libraries are soft-float glibc 2.13. To run them we assemble an
-RX3 userland at `/data/rbx3-run` and `chroot` into it. The Prime GO kernel
+RX3 userland at `/data/primebox/rootfs` and `chroot` into it. The Prime GO kernel
 provides `/lib32`/hard-float tooling for the host side; the chroot is pure RX3
 soft-float.
 
-### Contents of `/data/rbx3-run`
+### Contents of `/data/primebox/rootfs`
 
 ```
-/data/rbx3-run/
+/data/primebox/rootfs/
 ├── lib/ld-linux.so.3 -> ld-2.13.so     soft-float loader
 ├── lib/libc.so.6, libpthread.so.0, ... RX3 glibc 2.13
 ├── usr/lib/                            libstdc++, DirectFB 1.4, freetype, ...
-├── usr/lib/directfb-1.4-6/
+├── usr/lib/directfb-1.4-0/             ← RX3 core's module dir (ABI 9)
 │   ├── systems/libdirectfb_fbdev.so    ← our rebuilt, patched module
 │   ├── inputdrivers/…                  linux_input (VT gate removed)
 │   └── wm/libdirectfbwm_default.so
@@ -72,15 +72,15 @@ soft-float.
 
 ### Bind mounts (run after every reboot)
 
-`scripts/device/fix-dev.sh` recreates everything:
+`scripts/device/setup-chroot.sh` recreates everything:
 
 ```sh
-umount /data/rbx3-run/dev 2>/dev/null; rm -rf /data/rbx3-run/dev
-mkdir -p /data/rbx3-run/dev
-mount --bind /dev  /data/rbx3-run/dev
-mount --bind /proc /data/rbx3-run/proc
-mount --bind /sys  /data/rbx3-run/sys
-mount --bind /tmp  /data/rbx3-run/tmp
+umount /data/primebox/rootfs/dev 2>/dev/null; rm -rf /data/primebox/rootfs/dev
+mkdir -p /data/primebox/rootfs/dev
+mount --bind /dev  /data/primebox/rootfs/dev
+mount --bind /proc /data/primebox/rootfs/proc
+mount --bind /sys  /data/primebox/rootfs/sys
+mount --bind /tmp  /data/primebox/rootfs/tmp
 ```
 
 `/tmp` is shared, so FIFOs created on the host (e.g. `/tmp/udev_usb1`) are the
@@ -94,7 +94,7 @@ or crash:
 
 | Device | Type | Why |
 |---|---|---|
-| `/dev/gpiodrv` | regular file + `read()` shim | `GpioManager` blocks/polls on it; `fbshim-tsc` returns a byte and parks the poll so it does not burn CPU |
+| `/dev/gpiodrv` | regular file + `read()` shim | `GpioManager` blocks/polls on it; `fbshim` returns a byte and parks the poll so it does not burn CPU |
 | `/dev/subucom_spi{1,2}.0`, `/dev/subucom_spi_rdy{3,4}.0` | FIFOs | polled SPI to the (absent) sub-MCU; FIFOs block instead of busy-spin |
 | `/dev/hidg0` | FIFO | USB HID gadget for rekordbox HID mode |
 | `/dev/printkdrv0`, `/dev/tsc2007_2-0048` | regular files | ioctl-only; the touch one is replaced by the shim |
@@ -107,7 +107,7 @@ Pioneer's VFS resolver (`vfs_getfsys`) reads `/etc/mtab`. Inside the chroot it
 is symlinked to `/proc/mounts`:
 
 ```sh
-ln -sf /proc/mounts /data/rbx3-run/etc/mtab
+ln -sf /proc/mounts /data/primebox/rootfs/etc/mtab
 ```
 
 Without it, the USB mount is never classified as `vfat` and browsing fails.
@@ -128,7 +128,7 @@ symbol versioning is correct:
 RX3=extracted/XDJRX3-rootfs
 arm-linux-gnueabi-gcc -O2 -march=armv5t -mfloat-abi=soft \
     -fno-stack-protector -fPIC -shared \
-    -o knobshim2.so knobshim2.c \
+    -o knobshim.so knobshim.c \
     -I"$RX3/usr/include" \
     -L"$RX3/lib" -L"$RX3/usr/lib" \
     -lpthread -lc -Wl,-rpath-link,"$RX3/lib:$RX3/usr/lib"
@@ -137,7 +137,7 @@ arm-linux-gnueabi-gcc -O2 -march=armv5t -mfloat-abi=soft \
 Verify with:
 
 ```bash
-arm-linux-gnueabi-objdump -T knobshim2.so | grep GLIBC | sort -u
+arm-linux-gnueabi-objdump -T knobshim.so | grep GLIBC | sort -u
 # must only reference GLIBC_2.4 / GLIBC_2.7 (no 2.17!)
 ```
 

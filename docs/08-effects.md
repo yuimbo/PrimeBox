@@ -1,7 +1,7 @@
 # 08 — Sound Color FX & Beat FX
 
 The Prime GO's FX strip has fewer controls than a DJM/RX3 mixer, and the Prime
-GO has no hardware channel-select switch. `knobshim2` maps the available
+GO has no hardware channel-select switch. `knobshim` maps the available
 controls onto `rbp`'s FX keycodes and pins Beat FX to MASTER.
 
 ## 1. Sound Color FX (per channel)
@@ -23,7 +23,7 @@ The knob sends a normalised float:
 ```
 
 `rbp` initialises `SoundColorFxType = 0` (off), so a knob turn alone is silent.
-`knobshim2` presses Filter once on each channel at startup and sets the knob to
+`knobshim` presses Filter once on each channel at startup and sets the knob to
 `0.5`, then the physical Buttons A/B switch modes live. Each channel is
 independent (`sendKey(..., ch=1|2)`).
 
